@@ -2,7 +2,7 @@
 
 PanVK is Mesa's Vulkan driver for Mali GPUs. This Android build targets the **Mali-G925 / Immortalis MC11** using the **Mali Kbase CSF (Command Stream Frontend)** backend. The published ADPKG is an experimental G925 build, not a Vulkan-conformant release.
 
-The **Android AArch64 ADPKG** is attached to the [Mesa 27 G925 release](https://github.com/adesyaefull/panvk-kbase-android-g925-mesa27/releases/tag/mesa27-g925-20261029). That release page is the download location.
+The **Android AArch64 ADPKG** is attached to the [Mesa 27 G925 release](https://github.com/adesyaefull/panvk-kbase-android-g925-mesa27/releases/tag/mesa27-g925-bc-mip-priority-20261029). That release page is the download location.
 
 ## Target
 
@@ -100,16 +100,41 @@ Known scope limits for this build include:
 
 ## BCn texture emulation
 
-When direct sampling is unavailable, the driver decodes BC texture data into a GPU image:
+When direct sampling is unavailable, the driver decodes BC texture data into a GPU shadow image:
 
-| Input formats | Default decoded representation |
-|---|---|
-| BC1–BC3 | ETC2 |
-| BC4 / BC5 | EAC R11 / RG11 |
-| BC6H | ASTC HDR |
-| BC7 | ASTC LDR |
+| Input format | Default decoded representation | Nominal decoded rate |
+|---|---|---:|
+| BC1 | ETC2 RGB | 4 bits/texel |
+| BC2 / BC3 | ETC2 RGBA | 8 bits/texel |
+| BC4 | EAC R11 | 4 bits/texel |
+| BC5 | EAC RG11 | 8 bits/texel |
+| BC6H | ASTC 4x4 HDR | 8 bits/texel |
+| BC7 | ASTC 4x4 LDR | 8 bits/texel |
 
-`PANVK_BC_ETC=0` selects ASTC for BC1 and ASTC or eligible AFRC for BC2/BC3. AFRC is disabled by default, lossy, and eligible only for selected BC2/BC3 images. `PANVK_BC_EAC=0` selects R8/RG8 decoding for BC4/BC5 at higher decoded-memory cost. `PANVK_BC_DIRECT_UPLOAD` selects the upload decode path; `PANVK_BC_KEEP_RAW=1` retains the compressed source plane and uses extra memory. BC image quality and performance are workload-dependent. See [runtime options](./envar.md) for all BC controls.
+### Nominal decoded footprint per mip level
+
+For square images, the following estimates count complete 4x4 output blocks (8 bytes at 4 bits/texel; 16 bytes at 8 bits/texel). Dimensions below 4x4 still occupy at least one block.
+
+| Image dimensions | 4 bits/texel | 8 bits/texel |
+|---:|---:|---:|
+| 1x1 | 8 B | 16 B |
+| 2x2 | 8 B | 16 B |
+| 4x4 | 8 B | 16 B |
+| 8x8 | 32 B | 64 B |
+| 16x16 | 128 B | 256 B |
+| 32x32 | 512 B | 1 KiB |
+| 64x64 | 2 KiB | 4 KiB |
+| 128x128 | 8 KiB | 16 KiB |
+| 256x256 | 32 KiB | 64 KiB |
+| 512x512 | 128 KiB | 256 KiB |
+| 1Kx1K | 512 KiB | 1 MiB |
+| 2Kx2K | 2 MiB | 4 MiB |
+| 4Kx4K | 8 MiB | 16 MiB |
+| 8Kx8K | 32 MiB | 64 MiB |
+
+These are per-level estimates, not measured allocations. Sum the mip levels for a full chain. They exclude tiling/alignment padding and any retained raw BC source plane. `PANVK_BC_ETC=0` selects ASTC for BC1 (8 bits/texel); BC2/BC3 use ASTC unless an eligible AFRC coding unit is selected. AFRC allocation depends on its coding unit and image layout. `PANVK_BC_EAC=0` selects R8/RG8 for BC4/BC5 (8/16 bits per texel, or 64/128 MiB at 8Kx8K).
+
+`PANVK_BC_MIP_PRIORITY=1` (default) schedules the smallest mip levels first for multi-mip BC upload, copy, and zero-initialization decode batches, with a write dependency between levels. Set it to `0` to disable the ordering. This prioritizes decode work only: it is not residency streaming, does not defer full-resolution allocation, and all requested mips still need decoding. `PANVK_BC_DIRECT_UPLOAD`, `PANVK_BC_KEEP_RAW`, `PANVK_BC_LINEAR`, and `PANVK_BC_AFRC` control other paths; see [runtime options](./envar.md). BC image quality and performance are workload-dependent. The new mip-priority path has not yet been validated on the target G925 device.
 
 ## Vulkan extension inventory
 

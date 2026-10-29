@@ -63,6 +63,7 @@ panvk_can_present_on_device(VkPhysicalDevice pdevice, int fd)
 #include "vk_object.h"
 
 #define PANVK_ANDROID_MAX_SWAPCHAIN_BUFFERS 8
+#define PANVK_ANDROID_MAX_SWAPCHAIN_IMAGES 4
 
 AHardwareBuffer *
 ANativeWindowBuffer_getHardwareBuffer(struct ANativeWindowBuffer *buffer);
@@ -177,7 +178,7 @@ panvk_wsi_android_get_capabilities2(VkIcdSurfaceBase *surface,
 
    pSurfaceCapabilities->surfaceCapabilities = (VkSurfaceCapabilitiesKHR){
       .minImageCount = 2,
-      .maxImageCount = PANVK_ANDROID_MAX_SWAPCHAIN_BUFFERS - min_undequeued,
+      .maxImageCount = PANVK_ANDROID_MAX_SWAPCHAIN_IMAGES,
       .currentExtent = {(uint32_t)w, (uint32_t)h},
       .minImageExtent = {1, 1},
       .maxImageExtent = {4096, 4096},
@@ -560,6 +561,7 @@ panvk_wsi_android_create_swapchain(
         min_undequeued < 0 ||
         min_undequeued >= PANVK_ANDROID_MAX_SWAPCHAIN_BUFFERS ||
         pCreateInfo->minImageCount < 2 ||
+        pCreateInfo->minImageCount > PANVK_ANDROID_MAX_SWAPCHAIN_IMAGES ||
         pCreateInfo->minImageCount >
            PANVK_ANDROID_MAX_SWAPCHAIN_BUFFERS - min_undequeued)
        return panvk_errorf(device, VK_ERROR_INITIALIZATION_FAILED,

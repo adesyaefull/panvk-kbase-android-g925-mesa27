@@ -1042,8 +1042,11 @@ panvk_per_arch(cmd_bc_decode_zero_initialized)(
          vk_image_subresource_level_count(&img->vk, &b->subresourceRange);
       const uint32_t layer_count =
          vk_image_subresource_layer_count(&img->vk, &b->subresourceRange);
-      for (uint32_t l = 0; l < level_count; l++) {
-         const uint32_t level = b->subresourceRange.baseMipLevel + l;
+      const bool mip_priority = panvk_bc_mip_priority_enabled();
+      for (uint32_t pass = 0; pass < level_count; pass++) {
+         const uint32_t level =
+            b->subresourceRange.baseMipLevel +
+            (mip_priority ? level_count - 1 - pass : pass);
          const VkImageSubresourceLayers subres = {
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
             .mipLevel = level,
@@ -1074,6 +1077,10 @@ panvk_per_arch(cmd_bc_decode_zero_initialized)(
          bc_decode_region(cmdbuf, img, &subres, (VkOffset3D){0, 0, 0},
                           vk_image_mip_level_extent(&img->vk, level),
                           img->bc_noraw ? &zero_src : NULL);
+         if (mip_priority && pass + 1 < level_count)
+            bc_decode_barrier(panvk_cmd_buffer_to_handle(cmdbuf),
+                              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                              VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
       }
    }
 
@@ -1099,8 +1106,11 @@ panvk_per_arch(cmd_bc_decode_zero_initialized)(
             vk_image_subresource_level_count(&img->vk, &b->subresourceRange);
          const uint32_t layer_count =
             vk_image_subresource_layer_count(&img->vk, &b->subresourceRange);
-         for (uint32_t l = 0; l < level_count; l++) {
-            const uint32_t level = b->subresourceRange.baseMipLevel + l;
+         const bool mip_priority = panvk_bc_mip_priority_enabled();
+         for (uint32_t pass = 0; pass < level_count; pass++) {
+            const uint32_t level =
+               b->subresourceRange.baseMipLevel +
+               (mip_priority ? level_count - 1 - pass : pass);
             const VkImageSubresourceLayers subres = {
                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                .mipLevel = level,
@@ -1113,6 +1123,11 @@ panvk_per_arch(cmd_bc_decode_zero_initialized)(
                                   (VkOffset3D){0, 0, 0},
                                   vk_image_mip_level_extent(&img->vk, level),
                                   &src);
+            if (mip_priority && pass + 1 < level_count)
+               bc_decode_barrier(
+                  panvk_cmd_buffer_to_handle(cmdbuf),
+                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
          }
       }
       meta_gfx_end(cmdbuf, &gsave);
@@ -1142,21 +1157,40 @@ panvk_per_arch(CmdCopyMemoryToImageKHR)(
       copy_memory_to_image_raw(commandBuffer, pCopyMemoryInfo);
 
       meta_gfx_start(cmdbuf, &save);
-      for (uint32_t i = 0; i < pCopyMemoryInfo->regionCount; i++) {
-         const VkDeviceMemoryImageCopyKHR *r = &pCopyMemoryInfo->pRegions[i];
-         const uint32_t row_px =
-            r->addressRowLength ? r->addressRowLength : r->imageExtent.width;
-         const uint32_t col_px = r->addressImageHeight ? r->addressImageHeight
-                                                       : r->imageExtent.height;
-         const struct bc_decode_src src = {
-            .addr = r->addressRange.address,
-            .row_B = DIV_ROUND_UP(row_px, 4) * blk_B,
-            .slice_B = DIV_ROUND_UP(col_px, 4) *
-                       DIV_ROUND_UP(row_px, 4) * blk_B,
-         };
+      /* Finish low-resolution mips before starting higher-resolution ones. */
+      const bool mip_priority = panvk_bc_mip_priority_enabled();
+      const uint32_t mip_passes =
+         mip_priority ? bc_img->vk.mip_levels : 1;
+      for (uint32_t pass = 0; pass < mip_passes; pass++) {
+         bool decoded_mip = false;
+         const uint32_t mip =
+            mip_priority ? bc_img->vk.mip_levels - 1 - pass : 0;
+         for (uint32_t i = 0; i < pCopyMemoryInfo->regionCount; i++) {
+            const VkDeviceMemoryImageCopyKHR *r =
+               &pCopyMemoryInfo->pRegions[i];
+            if (mip_priority && r->imageSubresource.mipLevel != mip)
+               continue;
 
-         bc_decode_region_afrc(cmdbuf, bc_img, &r->imageSubresource,
-                               r->imageOffset, r->imageExtent, &src);
+            const uint32_t row_px =
+               r->addressRowLength ? r->addressRowLength
+                                   : r->imageExtent.width;
+            const uint32_t col_px =
+               r->addressImageHeight ? r->addressImageHeight
+                                     : r->imageExtent.height;
+            const struct bc_decode_src src = {
+               .addr = r->addressRange.address,
+               .row_B = DIV_ROUND_UP(row_px, 4) * blk_B,
+               .slice_B = DIV_ROUND_UP(col_px, 4) *
+                          DIV_ROUND_UP(row_px, 4) * blk_B,
+            };
+            bc_decode_region_afrc(cmdbuf, bc_img, &r->imageSubresource,
+                                  r->imageOffset, r->imageExtent, &src);
+            decoded_mip = true;
+         }
+         if (decoded_mip && mip_priority && pass + 1 < mip_passes)
+            bc_decode_barrier(commandBuffer,
+                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
       }
       meta_gfx_end(cmdbuf, &save);
       return;
@@ -1173,20 +1207,40 @@ panvk_per_arch(CmdCopyMemoryToImageKHR)(
          copy_memory_to_image_raw(commandBuffer, pCopyMemoryInfo);
 
       bc_decode_begin(cmdbuf, &save);
-      for (uint32_t i = 0; i < pCopyMemoryInfo->regionCount; i++) {
-         const VkDeviceMemoryImageCopyKHR *r = &pCopyMemoryInfo->pRegions[i];
-         const uint32_t row_px =
-            r->addressRowLength ? r->addressRowLength : r->imageExtent.width;
-         const uint32_t col_px = r->addressImageHeight ? r->addressImageHeight
-                                                       : r->imageExtent.height;
-         const struct bc_decode_src src = {
-            .addr = r->addressRange.address,
-            .row_B = DIV_ROUND_UP(row_px, 4) * blk_B,
-            .slice_B = DIV_ROUND_UP(col_px, 4) *
-                       DIV_ROUND_UP(row_px, 4) * blk_B,
-         };
-         bc_decode_region(cmdbuf, bc_img, &r->imageSubresource, r->imageOffset,
-                          r->imageExtent, direct_upload ? &src : NULL);
+      const bool mip_priority = panvk_bc_mip_priority_enabled();
+      const uint32_t mip_passes =
+         mip_priority ? bc_img->vk.mip_levels : 1;
+      for (uint32_t pass = 0; pass < mip_passes; pass++) {
+         bool decoded_mip = false;
+         const uint32_t mip =
+            mip_priority ? bc_img->vk.mip_levels - 1 - pass : 0;
+         for (uint32_t i = 0; i < pCopyMemoryInfo->regionCount; i++) {
+            const VkDeviceMemoryImageCopyKHR *r =
+               &pCopyMemoryInfo->pRegions[i];
+            if (mip_priority && r->imageSubresource.mipLevel != mip)
+               continue;
+
+            const uint32_t row_px =
+               r->addressRowLength ? r->addressRowLength
+                                   : r->imageExtent.width;
+            const uint32_t col_px =
+               r->addressImageHeight ? r->addressImageHeight
+                                     : r->imageExtent.height;
+            const struct bc_decode_src src = {
+               .addr = r->addressRange.address,
+               .row_B = DIV_ROUND_UP(row_px, 4) * blk_B,
+               .slice_B = DIV_ROUND_UP(col_px, 4) *
+                          DIV_ROUND_UP(row_px, 4) * blk_B,
+            };
+            bc_decode_region(cmdbuf, bc_img, &r->imageSubresource,
+                             r->imageOffset, r->imageExtent,
+                             direct_upload ? &src : NULL);
+            decoded_mip = true;
+         }
+         if (decoded_mip && mip_priority && pass + 1 < mip_passes)
+            bc_decode_barrier(commandBuffer,
+                              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                              VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
       }
       meta_compute_end(cmdbuf, &save);
       return;
@@ -1533,16 +1587,31 @@ bc_copy_image_noraw(struct panvk_cmd_buffer *cmdbuf,
 
    struct panvk_cmd_meta_compute_save_ctx save = {0};
    bc_decode_begin(cmdbuf, &save);
-   for (uint32_t i = 0; i < info->regionCount; i++) {
-      const VkImageCopy2 *r = &info->pRegions[i];
-      if (decoded) {
-         bc_copy_decoded_region(cmdbuf, src, dst, r);
-      } else {
-         const struct bc_decode_src raw =
-            bc_raw_plane_src(src, &r->srcSubresource, r->srcOffset);
-         bc_decode_region(cmdbuf, dst, &r->dstSubresource, r->dstOffset,
-                          r->extent, &raw);
+   const bool mip_priority = panvk_bc_mip_priority_enabled();
+   const uint32_t mip_passes = mip_priority ? dst->vk.mip_levels : 1;
+   for (uint32_t pass = 0; pass < mip_passes; pass++) {
+      bool copied_mip = false;
+      const uint32_t mip =
+         mip_priority ? dst->vk.mip_levels - 1 - pass : 0;
+      for (uint32_t i = 0; i < info->regionCount; i++) {
+         const VkImageCopy2 *r = &info->pRegions[i];
+         if (mip_priority && r->dstSubresource.mipLevel != mip)
+            continue;
+
+         if (decoded) {
+            bc_copy_decoded_region(cmdbuf, src, dst, r);
+         } else {
+            const struct bc_decode_src raw =
+               bc_raw_plane_src(src, &r->srcSubresource, r->srcOffset);
+            bc_decode_region(cmdbuf, dst, &r->dstSubresource, r->dstOffset,
+                             r->extent, &raw);
+         }
+         copied_mip = true;
       }
+      if (copied_mip && mip_priority && pass + 1 < mip_passes)
+         bc_decode_barrier(panvk_cmd_buffer_to_handle(cmdbuf),
+                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
    }
    meta_compute_end(cmdbuf, &save);
 }
@@ -1576,17 +1645,34 @@ panvk_per_arch(CmdCopyImage2)(VkCommandBuffer commandBuffer,
       bc_decode_barrier(commandBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                         VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
       meta_gfx_start(cmdbuf, &gsave);
-      for (uint32_t i = 0; i < pCopyImageInfo->regionCount; i++) {
-         const VkImageCopy2 *r = &pCopyImageInfo->pRegions[i];
-         VkExtent3D extent = r->extent;
-         if (!src_blocks) {
-            extent.width *= 4;
-            extent.height *= 4;
+      const bool mip_priority = panvk_bc_mip_priority_enabled();
+      const uint32_t mip_passes =
+         mip_priority ? bc_dst->vk.mip_levels : 1;
+      for (uint32_t pass = 0; pass < mip_passes; pass++) {
+         bool decoded_mip = false;
+         const uint32_t mip =
+            mip_priority ? bc_dst->vk.mip_levels - 1 - pass : 0;
+         for (uint32_t i = 0; i < pCopyImageInfo->regionCount; i++) {
+            const VkImageCopy2 *r = &pCopyImageInfo->pRegions[i];
+            if (mip_priority && r->dstSubresource.mipLevel != mip)
+               continue;
+
+            VkExtent3D extent = r->extent;
+            if (!src_blocks) {
+               extent.width *= 4;
+               extent.height *= 4;
+            }
+            const struct bc_decode_src raw =
+               bc_raw_plane_src(bc_dst, &r->dstSubresource, r->dstOffset);
+            bc_decode_region_afrc(cmdbuf, bc_dst, &r->dstSubresource,
+                                  r->dstOffset, extent, &raw);
+            decoded_mip = true;
          }
-         const struct bc_decode_src raw =
-            bc_raw_plane_src(bc_dst, &r->dstSubresource, r->dstOffset);
-         bc_decode_region_afrc(cmdbuf, bc_dst, &r->dstSubresource,
-                               r->dstOffset, extent, &raw);
+         if (decoded_mip && mip_priority && pass + 1 < mip_passes)
+            bc_decode_barrier(
+               commandBuffer,
+               VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+               VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
       }
       meta_gfx_end(cmdbuf, &gsave);
       return;
@@ -1594,16 +1680,31 @@ panvk_per_arch(CmdCopyImage2)(VkCommandBuffer commandBuffer,
 
    struct panvk_cmd_meta_compute_save_ctx save = {0};
    bc_decode_begin(cmdbuf, &save);
-   for (uint32_t i = 0; i < pCopyImageInfo->regionCount; i++) {
-      const VkImageCopy2 *r = &pCopyImageInfo->pRegions[i];
-      VkExtent3D extent = r->extent;
+   const bool mip_priority = panvk_bc_mip_priority_enabled();
+   const uint32_t mip_passes =
+      mip_priority ? bc_dst->vk.mip_levels : 1;
+   for (uint32_t pass = 0; pass < mip_passes; pass++) {
+      bool decoded_mip = false;
+      const uint32_t mip =
+         mip_priority ? bc_dst->vk.mip_levels - 1 - pass : 0;
+      for (uint32_t i = 0; i < pCopyImageInfo->regionCount; i++) {
+         const VkImageCopy2 *r = &pCopyImageInfo->pRegions[i];
+         if (mip_priority && r->dstSubresource.mipLevel != mip)
+            continue;
 
-      if (!src_blocks) {
-         extent.width *= 4;
-         extent.height *= 4;
+         VkExtent3D extent = r->extent;
+         if (!src_blocks) {
+            extent.width *= 4;
+            extent.height *= 4;
+         }
+         bc_decode_region(cmdbuf, bc_dst, &r->dstSubresource, r->dstOffset,
+                          extent, NULL);
+         decoded_mip = true;
       }
-      bc_decode_region(cmdbuf, bc_dst, &r->dstSubresource, r->dstOffset,
-                       extent, NULL);
+      if (decoded_mip && mip_priority && pass + 1 < mip_passes)
+         bc_decode_barrier(commandBuffer,
+                           VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                           VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
    }
    meta_compute_end(cmdbuf, &save);
 }

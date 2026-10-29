@@ -478,19 +478,6 @@ pandecode_texture_payload(struct pandecode_context *ctx, uint64_t payload,
 }
 #endif
 
-static bool
-pandecode_gpu_mem_range_is_mapped(struct pandecode_context *ctx, uint64_t addr,
-                                 size_t size)
-{
-   const struct pandecode_mapped_memory *mem =
-      pandecode_find_mapped_gpu_mem_containing(ctx, addr);
-   if (!mem || !mem->addr)
-      return false;
-
-   uint64_t offset = addr - mem->gpu_va;
-   return offset <= mem->length && size <= mem->length - offset;
-}
-
 #if PAN_ARCH >= 9
 static void
 pandecode_tex_plane(struct pandecode_context *ctx, uint64_t u, unsigned idx)

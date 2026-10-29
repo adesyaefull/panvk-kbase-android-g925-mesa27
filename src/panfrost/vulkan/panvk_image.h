@@ -96,6 +96,7 @@ panvk_bc_afrc_candidate(VkFormat format)
 /* BC4/BC5 use compact EAC by default; PANVK_BC_EAC=0 selects R8/RG8. */
 bool panvk_bc_eac_enabled(void);
 bool panvk_bc_direct_upload_enabled(void);
+bool panvk_bc_mip_priority_enabled(void);
 const uint32_t *panvk_bc_eac_lut_data(void);
 size_t panvk_bc_eac_lut_size(void);
 

@@ -2414,6 +2414,12 @@ get_cs_cfg(struct pandecode_context *ctx, struct hash_table_u64 *symbols,
       return cfg;
    }
 
+   if (!pandecode_gpu_mem_range_is_mapped(ctx, bin, bin_size)) {
+      pandecode_log(ctx, "CS binary @%" PRIx64 " with size %u is not mapped\n",
+                    bin, bin_size);
+      return NULL;
+   }
+
    uint64_t *instrs = pandecode_fetch_gpu_mem(ctx, bin, bin_size);
 
    cfg = rzalloc(symbols, struct cs_code_cfg);
@@ -2607,6 +2613,12 @@ GENX(pandecode_cs_binary)(struct pandecode_context *ctx, uint64_t bin,
 
    struct hash_table_u64 *symbols = _mesa_hash_table_u64_create(NULL);
    struct cs_code_cfg *main_cfg = get_cs_cfg(ctx, symbols, bin, bin_size);
+
+   if (!main_cfg) {
+      ralloc_free(symbols);
+      pandecode_map_read_write(ctx);
+      return;
+   }
 
    print_cs_binary(ctx, bin, main_cfg, "main_cs");
    hash_table_u64_foreach(symbols, he)

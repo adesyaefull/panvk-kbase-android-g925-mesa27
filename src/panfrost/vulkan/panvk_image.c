@@ -496,6 +496,16 @@ panvk_bc_direct_upload_enabled(void)
    return enabled;
 }
 
+bool
+panvk_bc_mip_priority_enabled(void)
+{
+   static int enabled = -1;
+
+   if (enabled < 0)
+      enabled = debug_get_bool_option("PANVK_BC_MIP_PRIORITY", true);
+   return enabled;
+}
+
 static void
 panvk_bc_shadow_info(const struct panvk_image *image, VkImageCreateInfo *info,
                      VkImageDrmFormatModifierListCreateInfoEXT *mod_list,

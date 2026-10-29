@@ -1,5 +1,15 @@
 # Changelog
 
+## Mesa 27 G925 BC mip-priority update (2026-10-29)
+
+- Process smaller mip levels first in multi-mip BC decode batches for upload, image-copy, and zero-initialization paths, inserting write dependencies between levels. `PANVK_BC_MIP_PRIORITY=1` is the default; set it to `0` to disable. This orders decode work but does not implement residency streaming or defer allocation of full-resolution levels.
+- Report and enforce a maximum of four Android swapchain images, while accounting for native-window undequeued buffers separately.
+- Share and guard CSF pandecode GPU-range validation so unmapped or unavailable command streams are logged and skipped rather than dereferenced. This is a decoder safety guard; it does not identify or fix the cause of GPU faults.
+- Document default BC1-BC7 decoded representations, runtime controls, and nominal per-mip shadow footprints from 1x1 through 8Kx8K. Estimates exclude layout overhead and retained compressed planes.
+- Build the development ADPKG `PanVK-Kbase-Android-g925-v13-csf-v0.0.0-dev-bc-mip-priority-20261029-e2d83eff.adpkg.zip` for G925 (`PAN_ARCH=13`), Kbase CSF, Android AArch64/API 35 minimum. Archive SHA-256: `452e03cf2aa5203c6f918da2b17d0e4be6cd1460707c121ababb76de9fe75e40`. ICD SHA-256: `75708a259856ce418b7ddcb193f2d53b7a7cc111ed3962ceca6e2a8edba8e526`. Source-tree digest: `sha256:659e7ab580f17845a68698fc4243631da74d178c88896643ceeb8ec64f0b0726`.
+- The package passed archive/package validation and the ICD was built successfully. This build has **not** been validated on the target device; no CTS or visual-correctness result is claimed.
+
+
 
 ## Mesa 27 source, package, and CTS history (2026-10-29)
 

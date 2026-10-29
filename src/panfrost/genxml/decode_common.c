@@ -82,6 +82,19 @@ pandecode_find_mapped_gpu_mem_containing(struct pandecode_context *ctx,
    return mem;
 }
 
+bool
+pandecode_gpu_mem_range_is_mapped(struct pandecode_context *ctx, uint64_t addr,
+                                  size_t size)
+{
+   const struct pandecode_mapped_memory *mem =
+      pandecode_find_mapped_gpu_mem_containing(ctx, addr);
+   if (!mem || !mem->addr)
+      return false;
+
+   uint64_t offset = addr - mem->gpu_va;
+   return offset <= mem->length && size <= mem->length - offset;
+}
+
 /*
  * To check for memory safety issues, validates that the given pointer in GPU
  * memory is valid, containing at least sz bytes. This function is a tool to

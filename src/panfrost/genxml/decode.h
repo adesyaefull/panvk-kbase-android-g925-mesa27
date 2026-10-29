@@ -49,6 +49,9 @@ struct pandecode_mapped_memory *
 pandecode_find_mapped_gpu_mem_containing(struct pandecode_context *ctx,
                                          uint64_t addr);
 
+bool pandecode_gpu_mem_range_is_mapped(struct pandecode_context *ctx,
+                                       uint64_t addr, size_t size);
+
 void pandecode_map_read_write(struct pandecode_context *ctx);
 
 void pandecode_dump_mappings(struct pandecode_context *ctx);
