@@ -1,0 +1,84 @@
+diff a/src/panfrost/vulkan/panvk_vX_shader.c b/src/panfrost/vulkan/panvk_vX_shader.c	(rejected hunks)
+@@ -1203,6 +1203,82 @@ panvk_gpu_prerast_passthrough_nir(const nir_shader *source, uint64_t outputs,
+    return b.shader;
+ }
+ 
++/* Passthrough for a VS or TES that writes ViewportIndex. Same job as the GS
++ * passthrough: transform the clip position with the selected viewport, store
++ * the per-viewport scissor planes in scissor_loc, and keep the index itself
++ * out of the HW varyings (it shares the layer byte). The draw that uses it
++ * is split into per-viewport runs on the CPU-recorded command stream.
++ */
++static nir_shader *
++panvk_gpu_prerast_vs_vp_passthrough_nir(
++   const nir_shader *source, uint64_t outputs,
++   const struct panvk_gpu_prerast_out_types *t, uint8_t scissor_loc)
++{
++   nir_builder b = nir_builder_init_simple_shader(
++      MESA_SHADER_VERTEX, source->options, "panvk_gpu_prerast_vs_vp_passthrough");
++   nir_def *base = load_sysval(&b, graphics, 64, gpu_prerast_records);
++   nir_def *params = load_sysval(&b, graphics, 64, gpu_prerast_params);
++   nir_def *stride = nir_u2u64(
++      &b, nir_imm_int(&b, ALIGN_POT(util_bitcount64(outputs) * 16, 16)));
++   nir_def *verts = nir_load_global(
++      &b, 1, 32,
++      nir_iadd_imm(&b, params,
++                   offsetof(struct panvk_gpu_prerast_params, vertex_count)),
++      .align_mul = 4);
++   nir_def *linear = nir_iadd(&b, nir_load_vertex_id(&b),
++                              nir_imul(&b, nir_load_instance_id(&b), verts));
++   nir_def *record =
++      nir_iadd(&b, base, nir_imul(&b, nir_u2u64(&b, linear), stride));
++
++   unsigned vp_slot =
++      util_bitcount64(outputs & BITFIELD64_MASK(VARYING_SLOT_VIEWPORT));
++   nir_def *vp_index = nir_load_global(
++      &b, 1, 32, nir_iadd_imm(&b, record, vp_slot * 16), .align_mul = 4);
++
++   unsigned idx = 0;
++   nir_def *planes = NULL;
++   u_foreach_bit64(location, outputs) {
++      unsigned slot = util_bitcount64(outputs & BITFIELD64_MASK(location));
++      if (location == VARYING_SLOT_VIEWPORT)
++         continue;
++      unsigned ncomp = 4;
++      nir_alu_type type = t->type[location] ? t->type[location]
++                                            : nir_type_float32;
++      switch (location) {
++      case VARYING_SLOT_PSIZ:
++         ncomp = 1;
++         type = nir_type_float32;
++         break;
++      case VARYING_SLOT_LAYER:
++      case VARYING_SLOT_PRIMITIVE_ID:
++         ncomp = 1;
++         type = nir_type_int32;
++         break;
++      default:
++         break;
++      }
++      nir_def *value = nir_load_global(
++         &b, ncomp, 32, nir_iadd_imm(&b, record, slot * 16), .align_mul = 4);
++      if (location == VARYING_SLOT_POS) {
++         struct panvk_prerast_xform xf =
++            panvk_prerast_viewport_xform(&b, value, vp_index);
++         value = xf.screen;
++         planes = xf.planes;
++         type = nir_type_float32;
++         ncomp = 4;
++      }
++      nir_store_output(&b, value, nir_imm_int(&b, 0), .base = idx++,
++                       .write_mask = BITFIELD_MASK(ncomp), .src_type = type,
++                       .io_semantics = {.location = location, .num_slots = 1});
++   }
++
++   panvk_prerast_store_clip(&b, planes, scissor_loc, idx++);
++   b.shader->info.outputs_written =
++      (outputs & ~VARYING_BIT_VIEWPORT) | BITFIELD64_BIT(scissor_loc);
++   b.shader->num_outputs = idx;
++   return b.shader;
++}
++
+ static nir_def *
+ panvk_gpu_prerast_vs_is_restart(nir_builder *b)
+ {

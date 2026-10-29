@@ -1,0 +1,66 @@
+name: PanVK bug report
+description: Report a reproducible PanVK/Kbase driver problem with device details and logs.
+title: "[G925] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, check the README, CHANGELOG, Vulkan extension inventory, and existing issues. This is an experimental driver; please include exact reproduction steps and logs. Review and redact personal information before attaching files.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and what you expected instead.
+      placeholder: Include the first relevant Vulkan/Kbase error if known.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: List exact steps, settings, and how often the issue occurs.
+      placeholder: |
+        1. Select the tested ICD in PanProbe/PanPlay...
+        2. Run the application or focused test...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: device-build
+    attributes:
+      label: Device and driver build
+      description: Provide device/GPU, Android version, Kbase/kernel if known, package or ICD filename, and driver version/build.
+      placeholder: |
+        Device/model:
+        GPU:
+        Android/build:
+        Kbase/kernel (if known):
+        Driver/ADPKG or imported ICD:
+        PanProbe selected driver (system/bundled/imported):
+    validations:
+      required: true
+  - type: textarea
+    id: application
+    attributes:
+      label: Application and test
+      description: Name/version of the app or game; include PanProbe test name and PASS/FAIL/SKIP if relevant.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and attachments
+      description: Attach PanProbe Info JSON/test log, PanPlay Session logs ZIP, or ADB logcat as appropriate. Redact secrets and unrelated personal data first.
+      placeholder: Describe which logs are attached and any privacy redactions.
+  - type: textarea
+    id: previous-build
+    attributes:
+      label: Comparison with another build
+      description: If a previous driver/package worked or behaved differently, give its exact version/build.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked existing issues and identified the exact driver build tested.
+          required: true
+        - label: I reviewed attached logs and removed tokens, credentials, and unrelated personal data.
+          required: true
